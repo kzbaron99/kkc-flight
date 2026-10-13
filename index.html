@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>เที่ยวบินขาเข้า - สนามบินขอนแก่น</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Noto Sans Thai', sans-serif; background-color: #f7f9fa; }
+        .flight-card {
+            background: white; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            position: relative; overflow: hidden; transition: all 0.3s;
+        }
+        .flight-card::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 6px; background-color: #cbd5e1; }
+        .status-scheduled::before { background-color: #94a3b8; } 
+        .status-active::before { background-color: #3b82f6; }    
+        .status-landed::before { background-color: #10b981; }    
+        .status-cancelled::before { background-color: #ef4444; } 
+        .status-incident::before { background-color: #f59e0b; }  
+        
+        .badge { padding: 4px 12px; border-radius: 6px; font-weight: 600; font-size: 0.875rem; }
+        .badge-scheduled { background-color: #f1f5f9; color: #475569; }
+        .badge-active { background-color: #eff6ff; color: #2563eb; }
+        .badge-landed { background-color: #ecfdf5; color: #059669; }
+        .badge-cancelled { color: #dc2626; } 
+        .badge-incident { background-color: #fffbeb; color: #d97706; }
+
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body class="p-4 md:p-8 max-w-3xl mx-auto">
+
+    <div class="mb-4 border-b pb-4">
+        <h1 class="text-2xl font-bold text-gray-900 mb-2">เที่ยวบินขาเข้า - ท่าอากาศยานนานาชาติขอนแก่น (KKC)</h1>
+        <p class="text-sm text-gray-500" id="update-time">ระบบไฮบริด: ตารางบินอ้างอิงสนามบิน + อัปเดตสถานะเรียลไทม์</p>
+    </div>
+
+    <!-- แถบเลือกวันที่ (+/- 2 วัน) -->
+    <div id="date-buttons" class="flex overflow-x-auto gap-2 mb-4 pb-2 no-scrollbar"></div>
+
+    <div class="flex justify-between items-center mb-6 bg-white p-3 rounded-lg shadow-sm border border-gray-100">
+        <div id="total-flights" class="font-medium text-gray-700 text-sm md:text-base">กำลังโหลดตารางการบิน...</div>
+        <button onclick="fetchLiveFlights()" class="bg-gray-800 hover:bg-gray-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition shadow-sm whitespace-nowrap ml-2">
+            รีเฟรช
+        </button>
+    </div>
+
+    <div id="error-msg" class="hidden bg-orange-50 text-orange-600 p-3 rounded-lg text-center mb-4 text-sm font-medium"></div>
+
+    <div id="flight-list" class="space-y-4 pb-10"></div>
+
+    <script>
+        const API_KEY = '54b760a7a4294198d3becf5e3ae22987'; 
+        
+        // ฐานข้อมูลตารางบินขอนแก่น 14 ไฟล์ทของจริง (TFIC) แก้ปัญหา API มั่วเวลา
+        const KKC_MASTER_SCHEDULE = [
+            { time: "08:00", flight: "TG40", airline: "Thai Airways", from: "BKK", fromTh: "สุวรรณภูมิ" },
+            { time: "08:05", flight: "FD3250", airline: "Thai AirAsia", from: "DMK", fromTh: "ดอนเมือง" },
+            { time: "11:35", flight: "TG42", airline: "Thai Airways", from: "BKK", fromTh: "สุวรรณภูมิ" },
+            { time: "12:05", flight: "SL644", airline: "Thai Lion Air", from: "DMK", fromTh: "ดอนเมือง" },
+            { time: "12:30", flight: "FD3254", airline: "Thai AirAsia", from: "DMK", fromTh: "ดอนเมือง" },
+            { time: "15:10", flight: "TG44", airline: "Thai Airways", from: "BKK", fromTh: "สุวรรณภูมิ" },
+            { time: "15:30", flight: "FD3252", airline: "Thai AirAsia", from: "DMK", fromTh: "ดอนเมือง" },
+            { time: "16:00", flight: "VZ212", airline: "Thai Vietjet", from: "BKK", fromTh: "สุวรรณภูมิ" },
+            { time: "16:20", flight: "FD3260", airline: "Thai AirAsia", from: "DMK", fromTh: "ดอนเมือง" },
+            { time: "18:35", flight: "TG46", airline: "Thai Airways", from: "BKK", fromTh: "สุวรรณภูมิ" },
+            { time: "18:50", flight: "FD5500", airline: "Thai AirAsia", from: "CNX", fromTh: "เชียงใหม่" },
+            { time: "19:00", flight: "VZ214", airline: "Thai Vietjet", from: "BKK", fromTh: "สุวรรณภูมิ" },
+            { time: "19:30", flight: "SL648", airline: "Thai Lion Air", from: "DMK", fromTh: "ดอนเมือง" },
+            { time: "20:35", flight: "FD3258", airline: "Thai AirAsia", from: "DMK", fromTh: "ดอนเมือง" }
+        ];
+
+        function formatDate(dateObj) {
+            let month = '' + (dateObj.getMonth() + 1);
+            let day = '' + dateObj.getDate();
+            let year = dateObj.getFullYear();
+            if (month.length < 2) month = '0' + month;
+            if (day.length < 2) day = '0' + day;
+            return [year, month, day].join('-');
+        }
+
+        let todayDate = new Date();
+        let selectedDateStr = formatDate(todayDate);
+
+        function renderDateSelector() {
+            const container = document.getElementById('date-buttons');
+            container.innerHTML = '';
+            todayDate = new Date(); 
+            
+            for (let i = -2; i <= 2; i++) {
+                const targetDate = new Date();
+                targetDate.setDate(todayDate.getDate() + i);
+                const dStr = formatDate(targetDate);
+                
+                let label = '';
+                if (i === 0) label = 'วันนี้';
+                else if (i === -1) label = 'เมื่อวาน';
+                else if (i === 1) label = 'พรุ่งนี้';
+                else label = targetDate.toLocaleDateString('th-TH', { day: 'numeric', month: 'short' });
+
+                const isSelected = (dStr === selectedDateStr);
+                const baseClass = "px-5 py-2 rounded-xl text-sm font-bold whitespace-nowrap transition-all duration-200 cursor-pointer flex flex-col items-center justify-center ";
+                const colorClass = isSelected 
+                    ? "bg-gray-800 text-white shadow-md transform scale-105" 
+                    : "bg-white text-gray-500 border border-gray-200 hover:bg-gray-50 hover:text-gray-800";
+
+                const btn = document.createElement('button');
+                btn.className = baseClass + colorClass;
+                
+                const titleSpan = document.createElement('span');
+                titleSpan.innerText = label;
+                btn.appendChild(titleSpan);
+                
+                if(i >= -1 && i <= 1) {
+                    const subDate = document.createElement('span');
+                    subDate.className = "text-[10px] font-normal opacity-80 mt-0.5";
+                    subDate.innerText = targetDate.toLocaleDateString('th-TH', { day: 'numeric', month: 'short' });
+                    btn.appendChild(subDate);
+                }
+
+                btn.onclick = () => {
+                    selectedDateStr = dStr;
+                    renderDateSelector(); 
+                    fetchLiveFlights();   
+                };
+                container.appendChild(btn);
+            }
+        }
+
+        async function fetchLiveFlights() {
+            const list = document.getElementById('flight-list');
+            const errorMsg = document.getElementById('error-msg');
+            const totalText = document.getElementById('total-flights');
+            const now = new Date();
+            const isToday = (selectedDateStr === formatDate(now));
+            
+            list.innerHTML = '<div class="text-center py-10 text-gray-500"><svg class="animate-spin h-8 w-8 mx-auto mb-4 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>กำลังดึงข้อมูล...</div>';
+            errorMsg.classList.add('hidden');
+            document.getElementById('update-time').innerText = `อัปเดตล่าสุด: ${now.toLocaleTimeString('th-TH')}`;
+
+            // 1. กางตารางบิน 14 ไฟล์ทของขอนแก่น
+            let dailyFlights = KKC_MASTER_SCHEDULE.map(f => {
+                let [h, m] = f.time.split(':');
+                let arrTime = new Date(selectedDateStr + 'T00:00:00');
+                arrTime.setHours(parseInt(h), parseInt(m), 0);
+                
+                let status = 'scheduled';
+                let hoursUntil = (arrTime - now) / (1000 * 60 * 60);
+
+                if (selectedDateStr < formatDate(now)) {
+                    status = 'landed'; // ของเมื่อวาน ถือว่าลงจอดหมดแล้ว
+                } else if (isToday && hoursUntil < 0) {
+                    status = 'landed'; // ของวันนี้ ถ้าเวลาเลยไปแล้ว สันนิษฐานว่าลงจอดแล้ว
+                }
+
+                return {
+                    ...f,
+                    arrTime: arrTime,
+                    flight_status: status,
+                    hoursUntil: hoursUntil
+                };
+            });
+
+            // 2. ดึงสถานะ Live จาก API (ทำเฉพาะตอนที่ดูของ "วันนี้")
+            if (isToday) {
+                try {
+                    const url = `http://api.aviationstack.com/v1/flights?access_key=${API_KEY}&arr_iata=KKC&limit=100`;
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 8000); 
+
+                    const response = await fetch(url, { signal: controller.signal });
+                    clearTimeout(timeoutId); 
+                    const data = await response.json();
+
+                    if (!data.error && data.data) {
+                        data.data.forEach(apiFlight => {
+                            if (apiFlight.arrival.iata !== 'KKC' || !apiFlight.arrival.scheduled) return;
+
+                            // ตัดปัญหา Timezone ด้วยการอ่านข้อความวันที่ตรงๆ
+                            const apiArrTimeStr = apiFlight.arrival.scheduled.substring(0, 19);
+                            if (!apiArrTimeStr.startsWith(selectedDateStr)) return;
+                            
+                            let fNum = apiFlight.flight.iata;
+                            if (fNum && fNum.startsWith('AK')) fNum = fNum.replace('AK', 'FD'); 
+
+                            // เอาข้อมูล Live มาทับตารางหลัก
+                            let match = dailyFlights.find(b => b.flight === fNum);
+                            if (match) {
+                                if (apiFlight.flight_status === 'active') match.flight_status = 'active';
+                                if (apiFlight.flight_status === 'landed') match.flight_status = 'landed';
+                                if (apiFlight.flight_status === 'cancelled') match.flight_status = 'cancelled';
+                                if (apiFlight.flight_status === 'incident') match.flight_status = 'incident';
+                            }
+                        });
+                    }
+                } catch (error) {
+                    // ถ้าเน็ตช้าหรือ API ล่ม ให้ข้ามไปเลย ไม่ต้องแจ้ง Error สีแดงให้กวนใจ 
+                    // เพราะเรามีตารางเวลาโชว์ให้ดูอยู่แล้ว
+                    console.log("API Error, using fallback schedule.");
+                }
+            }
+
+            list.innerHTML = '';
+            let passedCount = 0;
+            
+            dailyFlights.forEach(f => {
+                if (f.flight_status === 'landed') {
+                    passedCount++;
+                }
+            });
+
+            if (isToday) {
+                totalText.innerHTML = `สรุปวันนี้: มี <b>14</b> ไฟล์ท <span class="mx-1 text-gray-300">|</span> <span class="text-emerald-600">ผ่านไปแล้ว <b>${passedCount}</b> ไฟล์ท</span>`;
+            } else {
+                totalText.innerHTML = `สรุปตารางบินวันที่เลือก: มีทั้งหมด <b>14</b> ไฟล์ท`;
+            }
+
+            // ซ่อนเที่ยวบินเก่าเกิน 2 ชม. เฉพาะเมื่อดูของ "วันนี้"
+            let displayFlights = dailyFlights;
+            if (isToday) {
+                displayFlights = dailyFlights.filter(f => f.hoursUntil >= -2);
+            }
+
+            // ชี้เป้า "เที่ยวบินถัดไป"
+            let foundNext = false;
+            displayFlights.forEach(f => {
+                if (isToday && !foundNext && f.flight_status !== 'landed' && f.flight_status !== 'cancelled' && f.hoursUntil > -0.5) {
+                    f.isNextTarget = true;
+                    foundNext = true;
+                } else {
+                    f.isNextTarget = false;
+                }
+            });
+
+            if(displayFlights.length === 0) {
+                list.innerHTML = `<p class="text-center text-gray-500 mt-10 text-lg">เที่ยวบินของวันนี้เดินทางถึงครบหมดแล้ว</p>`;
+                return;
+            }
+
+            displayFlights.forEach(f => {
+                const timeStr = f.arrTime.toLocaleTimeString('th-TH', {hour: '2-digit', minute:'2-digit'});
+                let statusTh = 'ไม่ทราบสถานะ';
+                let badgeClass = '';
+                let cardStatusClass = '';
+
+                switch(f.flight_status) {
+                    case 'scheduled': statusTh = 'รอตามกำหนด'; badgeClass = 'badge-scheduled'; cardStatusClass = 'status-scheduled'; break;
+                    case 'active': statusTh = 'กำลังบิน'; badgeClass = 'badge-active'; cardStatusClass = 'status-active'; break;
+                    case 'landed': statusTh = 'ถึงแล้ว'; badgeClass = 'badge-landed'; cardStatusClass = 'status-landed'; break;
+                    case 'cancelled': statusTh = 'ยกเลิก >'; badgeClass = 'badge-cancelled'; cardStatusClass = 'status-cancelled'; break;
+                    default: statusTh = 'รอตามกำหนด'; badgeClass = 'badge-scheduled'; cardStatusClass = 'status-scheduled'; break;
+                }
+
+                const targetBadge = f.isNextTarget 
+                    ? `<div class="bg-blue-600 text-white text-sm font-bold px-4 py-1.5 rounded-t-lg inline-block relative z-10 ml-4 shadow-sm">📍 เที่ยวบินถัดไป</div>`
+                    : '';
+                const targetCardStyle = f.isNextTarget 
+                    ? `border-2 border-blue-400 shadow-md ring-4 ring-blue-50 mt-[-2px]` 
+                    : `border border-gray-200`;
+
+                const card = `
+                    <div>
+                        ${targetBadge}
+                        <div class="flight-card ${cardStatusClass} ${targetCardStyle} p-5 flex justify-between items-center">
+                            <div class="pl-2">
+                                <div class="text-3xl font-bold text-slate-800 mb-1 leading-none tracking-tight">${timeStr}</div>
+                                <div class="text-base text-gray-700 font-medium mb-1">${f.fromTh} (${f.from})</div>
+                                <div class="text-sm text-gray-500">${f.airline} • ${f.flight}</div>
+                            </div>
+                            <div>
+                                <span class="badge ${badgeClass}">${statusTh}</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                list.innerHTML += card;
+            });
+        }
+
+        renderDateSelector();
+        fetchLiveFlights();
+        
+        setInterval(() => {
+            if (selectedDateStr === formatDate(new Date())) {
+                fetchLiveFlights();
+            }
+        }, 300000); 
+    </script>
+</body>
+</html>
